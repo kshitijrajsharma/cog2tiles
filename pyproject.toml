@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "cog2tiles"
-version = "0.0.1"
+dynamic = ["version"]
 description = "COG to web map tiles converter with concurrent processing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,6 +45,7 @@ dev = [
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
+    "commitizen>=4.8.3",
 ]
 
 [project.urls]
@@ -55,8 +56,22 @@ Issues = "https://github.com/kshitijrajsharma/cog2tiles/issues"
 [project.scripts]
 cog2tiles = "cog2tiles.cli:cli"
 
+[tool.hatch.version]
+path = "src/cog2tiles/_version.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/cog2tiles"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "pep621"
+update_changelog_on_bump = true
+major_version_zero = true
+version_files = [
+    "src/cog2tiles/_version.py:__version__"
+]
 
 [tool.black]
 line-length = 88
@@ -71,8 +86,3 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-
-[dependency-groups]
-dev = [
-    "commitizen>=4.8.3",
-]

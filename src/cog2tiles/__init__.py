@@ -6,11 +6,12 @@ Copyright: 2025
 License: MIT
 """
 
-__version__ = "1.0.0"
+from ._version import __version__
+
 __author__ = "Kshitij Raj Sharma"
-__email__ = "your.email@example.com"
+__email__ = "krschap@duck.com"
 
 from .tiler import COGTiler
 from .utils import normalize_array, process_bands
 
-__all__ = ["COGTiler", "normalize_array", "process_bands"]
+__all__ = ["COGTiler", "normalize_array", "process_bands", "__version__"]

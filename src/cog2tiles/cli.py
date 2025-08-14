@@ -17,6 +17,7 @@ try:
 except ImportError:
     uvloop = None
 
+from . import __version__
 from .tiler import COGTiler
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,9 @@ Examples:
         """,
     )
 
+    parser.add_argument(
+        "--version", action="version", version=f"cog2tiles {__version__}"
+    )
     parser.add_argument("input_cog", help="Input COG file path")
     parser.add_argument(
         "-z", "--zoom", type=int, required=True, help="Zoom level (0-22)"
