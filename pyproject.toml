@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
 name = "cog2tiles"
-dynamic = ["version"]
+version = "0.0.2"
 description = "COG to web map tiles converter with concurrent processing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -56,9 +56,6 @@ Issues = "https://github.com/kshitijrajsharma/cog2tiles/issues"
 [project.scripts]
 cog2tiles = "cog2tiles.cli:cli"
 
-[tool.hatch.version]
-path = "src/cog2tiles/_version.py"
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/cog2tiles"]
 
@@ -70,7 +67,8 @@ version_provider = "pep621"
 update_changelog_on_bump = true
 major_version_zero = true
 version_files = [
-    "src/cog2tiles/_version.py:__version__"
+    "src/cog2tiles/_version.py:__version__",
+    "pyproject.toml:project.version"
 ]
 
 [tool.black]
