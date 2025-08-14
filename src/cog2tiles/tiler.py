@@ -7,10 +7,11 @@ License: MIT
 """
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import mercantile
 import numpy as np
@@ -41,6 +42,7 @@ class COGTiler:
         max_workers: Optional[int] = None,
         prefix: str = "tile",
         extension: str = "png",
+        generate_geojson: bool = False,
     ):
         """
         Initialize the COGTiler.
@@ -50,11 +52,13 @@ class COGTiler:
             max_workers: Maximum concurrent workers (auto-detected if None)
             prefix: Filename prefix for generated tiles
             extension: Output file extension (png, jpg, webp)
+            generate_geojson: Whether to generate GeoJSON with tile status
         """
         self.tile_size = tile_size
         self.max_workers = max_workers or min(128, os.cpu_count() * 8)
         self.prefix = prefix
         self.extension = extension.lower().replace(".", "")
+        self.generate_geojson = generate_geojson
 
         if tile_size not in [256, 512]:
             raise ValueError("Tile size must be 256 or 512")
@@ -87,7 +91,15 @@ class COGTiler:
             logger.warning("No tiles to generate")
             return
 
-        await self._process_tiles_concurrently(tiles_df, input_cog, output_dir)
+        if self.generate_geojson:
+            tile_results = await self._process_tiles_concurrently(
+                tiles_df, input_cog, output_dir
+            )
+            await self._generate_tiles_geojson(tiles_df, tile_results, output_dir)
+        else:
+            await self._process_tiles_concurrently_simple(
+                tiles_df, input_cog, output_dir
+            )
 
     def _get_transformed_bounds(
         self, input_cog: str
@@ -143,10 +155,45 @@ class COGTiler:
                 f"Failed to generate tiles for bounds {bounds} at zoom {zoom}: {e}"
             )
 
-    async def _process_tiles_concurrently(
+    async def _process_tiles_concurrently_simple(
         self, tiles_df: pl.DataFrame, input_cog: str, output_dir: str
     ) -> None:
         """Process tiles using async concurrency."""
+        total_tiles = len(tiles_df)
+        logger.info(
+            f"Generating {total_tiles} tiles at zoom {tiles_df['z'][0]} using {self.max_workers} workers"
+        )
+
+        semaphore = asyncio.Semaphore(self.max_workers)
+
+        async def process_tile_batch(tile_batch):
+            async with semaphore:
+                return await self._process_tile_batch_simple(
+                    tile_batch, input_cog, output_dir
+                )
+
+        batch_size = max(1, total_tiles // (self.max_workers * 4))
+        logger.info(f"Batch size: {batch_size}")
+
+        batches = [
+            tiles_df.slice(i, min(batch_size, total_tiles - i))
+            for i in range(0, total_tiles, batch_size)
+        ]
+        logger.info(f"Number of batches: {len(batches)}")
+
+        tasks = [process_tile_batch(batch) for batch in batches]
+
+        results = []
+        for result in tqdm(asyncio.as_completed(tasks), total=len(tasks)):
+            batch_results = await result
+            results.extend(batch_results)
+
+        self._log_processing_results(results, total_tiles)
+
+    async def _process_tiles_concurrently(
+        self, tiles_df: pl.DataFrame, input_cog: str, output_dir: str
+    ) -> List[Dict[str, Any]]:
+        """Process tiles using async concurrency and return detailed results."""
         total_tiles = len(tiles_df)
         logger.info(
             f"Generating {total_tiles} tiles at zoom {tiles_df['z'][0]} using {self.max_workers} workers"
@@ -169,12 +216,13 @@ class COGTiler:
 
         tasks = [process_tile_batch(batch) for batch in batches]
 
-        results = []
+        all_results = []
         for result in tqdm(asyncio.as_completed(tasks), total=len(tasks)):
             batch_results = await result
-            results.extend(batch_results)
+            all_results.extend(batch_results)
 
-        self._log_processing_results(results, total_tiles)
+        self._log_processing_results([r["success"] for r in all_results], total_tiles)
+        return all_results
 
     def _log_processing_results(self, results: List[bool], total_tiles: int) -> None:
         """Log summary of tile processing results."""
@@ -194,7 +242,7 @@ class COGTiler:
                     "Run with --log-level WARNING to see individual tile failures"
                 )
 
-    async def _process_tile_batch(
+    async def _process_tile_batch_simple(
         self, tile_batch: pl.DataFrame, raster_path: str, output_dir: str
     ) -> List[bool]:
         """Process a batch of tiles in a thread executor."""
@@ -208,6 +256,31 @@ class COGTiler:
                         row["x"], row["y"], row["z"], cog, output_dir
                     )
                     results.append(result)
+            return results
+
+        return await loop.run_in_executor(None, process_batch)
+
+    async def _process_tile_batch(
+        self, tile_batch: pl.DataFrame, raster_path: str, output_dir: str
+    ) -> List[Dict[str, Any]]:
+        """Process a batch of tiles in a thread executor."""
+        loop = asyncio.get_event_loop()
+
+        def process_batch():
+            results = []
+            with Reader(raster_path) as cog:
+                for row in tile_batch.iter_rows(named=True):
+                    success = self._process_single_tile(
+                        row["x"], row["y"], row["z"], cog, output_dir
+                    )
+                    results.append(
+                        {
+                            "x": row["x"],
+                            "y": row["y"],
+                            "z": row["z"],
+                            "success": success,
+                        }
+                    )
             return results
 
         return await loop.run_in_executor(None, process_batch)
@@ -299,3 +372,66 @@ class COGTiler:
             save_kwargs.update({"compress_level": 6})
 
         img.save(output_path, **save_kwargs)
+
+    async def _generate_tiles_geojson(
+        self,
+        tiles_df: pl.DataFrame,
+        tile_results: List[Dict[str, Any]],
+        output_dir: str,
+    ) -> None:
+        """Generate GeoJSON file with tile bounds and status."""
+        output_path = Path(output_dir)
+        geojson_path = output_path / "tiles.geojson"
+
+        results_map = {(r["x"], r["y"], r["z"]): r["success"] for r in tile_results}
+
+        features = []
+
+        for row in tiles_df.iter_rows(named=True):
+            x, y, z = row["x"], row["y"], row["z"]
+
+            tile_bounds = mercantile.bounds(x, y, z)
+
+            polygon_coords = [
+                [
+                    [tile_bounds.west, tile_bounds.south],
+                    [tile_bounds.east, tile_bounds.south],
+                    [tile_bounds.east, tile_bounds.north],
+                    [tile_bounds.west, tile_bounds.north],
+                    [tile_bounds.west, tile_bounds.south],
+                ]
+            ]
+
+            success = results_map.get((x, y, z), False)
+            status = "downloaded" if success else "failed"
+
+            feature = {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": polygon_coords},
+                "properties": {
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "status": status,
+                    "filename": f"{self.prefix}-{x}-{y}-{z}.{self.extension}",
+                },
+            }
+
+            features.append(feature)
+
+        geojson = {"type": "FeatureCollection", "features": features}
+
+        with open(geojson_path, "w") as f:
+            json.dump(geojson, f, indent=2)
+
+        logger.info(
+            f"Generated GeoJSON with {len(features)} tile features: {geojson_path}"
+        )
+
+        downloaded_count = sum(
+            1 for f in features if f["properties"]["status"] == "downloaded"
+        )
+        failed_count = len(features) - downloaded_count
+        logger.info(
+            f"Tiles summary: {downloaded_count} downloaded, {failed_count} failed"
+        )

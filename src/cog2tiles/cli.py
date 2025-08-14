@@ -33,6 +33,7 @@ Examples:
   cog2tiles input.tif -z 14
   cog2tiles input.tif -z 16 --tile-size 512 --extension webp
   cog2tiles input.tif -z 12 --output-dir custom_tiles/ --workers 64
+  cog2tiles input.tif -z 14 --dump-tiles-json
         """,
     )
 
@@ -68,6 +69,11 @@ Examples:
         default="INFO",
         help="Set the logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--dump-tiles-json",
+        action="store_true",
+        help="Generate GeoJSON file with tile status information",
+    )
 
     return parser
 
@@ -91,6 +97,7 @@ async def main():
             max_workers=args.workers,
             prefix=args.prefix,
             extension=args.extension,
+            generate_geojson=args.dump_tiles_json,
         )
 
         await tiler.convert_to_tiles(args.input_cog, args.output_dir, args.zoom)
