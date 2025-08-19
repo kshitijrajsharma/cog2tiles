@@ -1,3 +1,9 @@
+## v0.0.4 (2025-08-19)
+
+### Fix
+
+- **uv-loop**: fixes windows compatibility
+
 ## v0.0.3 (2025-08-14)
 
 ### Fix

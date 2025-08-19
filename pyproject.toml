@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cog2tiles"
-version = "0.0.3"
+version = "0.0.4"
 description = "COG to web map tiles converter with concurrent processing"
 readme = "README.md"
 requires-python = ">=3.11"
